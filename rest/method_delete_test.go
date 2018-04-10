@@ -1,19 +1,154 @@
-package rest
+package rest_test
 
 import (
-	"bytes"
 	"context"
 	"net/http"
-	"net/url"
 	"testing"
 
 	"github.com/rs/rest-layer-mem"
 	"github.com/rs/rest-layer/resource"
 	"github.com/rs/rest-layer/schema"
 	"github.com/rs/rest-layer/schema/query"
-	"github.com/stretchr/testify/assert"
 )
 
+func TestDeleteList(t *testing.T) {
+	sharedInit := func() *requestTestVars {
+		s := mem.NewHandler()
+		s.Insert(context.Background(), []*resource.Item{
+			{ID: "1", Payload: map[string]interface{}{"id": "1", "foo": "odd"}},
+			{ID: "2", Payload: map[string]interface{}{"id": "2", "foo": "even"}},
+			{ID: "3", Payload: map[string]interface{}{"id": "3", "foo": "odd"}},
+			{ID: "4", Payload: map[string]interface{}{"id": "4", "foo": "even"}},
+			{ID: "5", Payload: map[string]interface{}{"id": "5", "foo": "odd"}},
+		})
+
+		idx := resource.NewIndex()
+		idx.Bind("foo", schema.Schema{
+			Fields: schema.Fields{
+				"id":  {Sortable: true, Filterable: true},
+				"foo": {Filterable: true},
+			},
+		}, s, resource.Conf{AllowedModes: resource.ReadWrite})
+
+		return &requestTestVars{
+			Index:   idx,
+			Storers: map[string]resource.Storer{"foo": s},
+		}
+	}
+	checkFooIDs := func(ids ...interface{}) requestCheckerFunc {
+		return func(t *testing.T, vars *requestTestVars) {
+			s := vars.Storers["foo"]
+			items, err := s.Find(context.Background(), &query.Query{Sort: query.Sort{{Name: "id", Reversed: false}}})
+			if err != nil {
+				t.Errorf("s.Find failed: %s", err)
+			}
+			if el, al := len(ids), len(items.Items); el != al {
+				t.Errorf("Expected resource 'foo' to contain %d items, got %d", el, al)
+				return
+			}
+			for i, eid := range ids {
+				if aid := items.Items[i].ID; eid != aid {
+					el := len(ids)
+					t.Errorf("Expected item %d/%d to have ID %q, got ID %q", i+1, el, eid, aid)
+				}
+			}
+		}
+	}
+
+	tests := map[string]requestTest{
+		`clearAll`: {
+			Init: sharedInit,
+			NewRequest: func() (*http.Request, error) {
+				return http.NewRequest("DELETE", "/foo", nil)
+			},
+			ResponseCode:   http.StatusNoContent,
+			ResponseBody:   ``,
+			ResponseHeader: http.Header{"X-Total": []string{"5"}},
+			ExtraTest:      checkFooIDs(),
+		},
+		`limit=2`: {
+			Init: sharedInit,
+			NewRequest: func() (*http.Request, error) {
+				return http.NewRequest("DELETE", `/foo?limit=2`, nil)
+			},
+			ResponseCode:   http.StatusNoContent,
+			ResponseBody:   ``,
+			ResponseHeader: http.Header{"X-Total": []string{"2"}},
+			ExtraTest:      checkFooIDs("3", "4", "5"),
+		},
+		`limit=2,skip=1`: {
+			Init: sharedInit,
+			NewRequest: func() (*http.Request, error) {
+				return http.NewRequest("DELETE", `/foo?limit=2&skip=1`, nil)
+			},
+			ResponseCode:   http.StatusNoContent,
+			ResponseBody:   ``,
+			ResponseHeader: http.Header{"X-Total": []string{"2"}},
+			ExtraTest:      checkFooIDs("1", "4", "5"),
+		},
+		`filter=invalid`: {
+			Init: sharedInit,
+			NewRequest: func() (*http.Request, error) {
+				return http.NewRequest("DELETE", `/foo?filter=invalid`, nil)
+			},
+			ResponseCode: http.StatusUnprocessableEntity,
+			ResponseBody: `{
+				"code": 422,
+				"message": "URL parameters contain error(s)",
+				"issues": {
+					"filter": ["char 0: expected '{' got 'i'"]
+				}}`,
+			ExtraTest: checkFooIDs("1", "2", "3", "4", "5"),
+		},
+		`filter={foo:"even"}`: {
+			Init: sharedInit,
+			NewRequest: func() (*http.Request, error) {
+				return http.NewRequest("DELETE", `/foo?filter={foo:"even"}`, nil)
+			},
+			ResponseCode:   http.StatusNoContent,
+			ResponseBody:   ``,
+			ResponseHeader: http.Header{"X-Total": []string{"2"}},
+			ExtraTest:      checkFooIDs("1", "3", "5"),
+		},
+		`filter={foo:"odd"}`: {
+			Init: sharedInit,
+			NewRequest: func() (*http.Request, error) {
+				return http.NewRequest("DELETE", `/foo?filter={foo:"odd"}`, nil)
+			},
+			ResponseCode:   http.StatusNoContent,
+			ResponseBody:   ``,
+			ResponseHeader: http.Header{"X-Total": []string{"3"}},
+			ExtraTest:      checkFooIDs("2", "4"),
+		},
+		`filter={foo:"odd"},limit=2`: {
+			Init: sharedInit,
+			NewRequest: func() (*http.Request, error) {
+				return http.NewRequest("DELETE", `/foo?filter={foo:"odd"}&limit=2`, nil)
+			},
+			ResponseCode:   http.StatusNoContent,
+			ResponseBody:   ``,
+			ResponseHeader: http.Header{"X-Total": []string{"2"}},
+			ExtraTest:      checkFooIDs("2", "4", "5"),
+		},
+		`filter={foo:"odd"},limit=2,skip=1`: {
+			Init: sharedInit,
+			NewRequest: func() (*http.Request, error) {
+				return http.NewRequest("DELETE", `/foo?filter={foo:"odd"}&limit=2&skip=1`, nil)
+			},
+			ResponseCode:   http.StatusNoContent,
+			ResponseBody:   ``,
+			ResponseHeader: http.Header{"X-Total": []string{"2"}},
+			ExtraTest:      checkFooIDs("1", "2", "4"),
+		},
+	}
+
+	for n, tc := range tests {
+		tc := tc // capture range variable
+		t.Run(n, tc.Test)
+	}
+}
+
+/*
 func TestHandlerDeleteList(t *testing.T) {
 	s := mem.NewHandler()
 	s.Insert(context.TODO(), []*resource.Item{
@@ -129,3 +264,4 @@ func TestHandlerDeleteListNoStorage(t *testing.T) {
 		assert.Equal(t, "No Storage Defined", err.Message)
 	}
 }
+*/

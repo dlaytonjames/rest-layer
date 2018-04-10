@@ -75,7 +75,10 @@ func TestHandlerPostList(t *testing.T) {
 			ResponseCode: http.StatusUnprocessableEntity,
 			ResponseBody: `{
 				"code": 422,
-				"message": "Invalid ` + "`fields`" + ` parameter: invalid: unknown field"
+				"message": "URL parameters contain error(s)",
+				"issues": {
+					"fields": ["invalid: unknown field"]
+				}
 			}`,
 		},
 		"Dup": {
